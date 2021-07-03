@@ -13,7 +13,7 @@ This way, only users who own the original content can access the subtitles.
 
 1. Download `muku-subs.html` and open it
 2. Select the original audio media
-3. Add the subtitle tracks in VTT format
+3. Add the subtitle tracks with language code and content in VTT format
 4. Click `Generate HTML`
 
 ![](screenshot.png)
