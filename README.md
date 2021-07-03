@@ -2,6 +2,8 @@
 
 Subtitle distribution for licensed audio media
 
+Live demo: https://akiroz.github.io/muku-subs/
+
 ### How it works
 
 This tool packages 1 or more subtitles (VTT format) into an HTML-based player
