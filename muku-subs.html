@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Muku Subs</title>
+    <style id="player-style">
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+            color: #CCC;
+            font-family: Helvetica, Arial, sans-serif;
+        }
+
+        body,
+        #drop {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        #drop {
+            border: 5px dashed #CCC;
+        }
+
+        #drop,
+        video {
+            height: 80vh;
+            min-height: 480px;
+        }
+
+        #drop,
+        video,
+        audio {
+            width: 80vw;
+            min-width: 640px;
+        }
+
+        select {
+            position: fixed;
+            top: 0.5rem;
+            left: 0.5rem;
+        }
+    </style>
+    <style>
+        body {
+            justify-content: flex-start;
+            align-items: flex-start;
+        }
+
+        fieldset,
+        #generate {
+            margin: 1rem 1rem 0;
+        }
+
+        #sub-add {
+            margin-top: 1rem;
+        }
+
+        .sub-track {
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <form onsubmit="genHtml(event)">
+        <fieldset>
+            <legend>Audio</legend>
+            <input type="file" accept="audio/*" required>
+        </fieldset>
+        <fieldset id="sub">
+            <legend>Subtitles</legend>
+            <button onclick="addSubTrack()" id="sub-add">Add Track +</button>
+        </fieldset>
+        <input type="submit" id="generate" value="Generate HTML">
+    </form>
+
+    <template id="sub-track-template">
+        <div class="sub-track">
+            <input type="text" placeholder="lang" style="width: 3rem;" required>
+            <label>
+                VTT File:
+                <input type="file" accept="text/vtt" required>
+            </label>
+            <button>Remove -</button>
+        </div>
+    </template>
+
+    <script>
+        setTimeout(() => addSubTrack("en"), 0);
+
+        function addSubTrack(lang) {
+            const id = "track-" + Math.random().toString(16).split(".")[1];
+            const track = document.querySelector("#sub-track-template").content.cloneNode(true);
+            track.querySelector("div").id = id;
+            track.querySelector("button").onclick = () => {
+                document.querySelector("#" + id).remove();
+            };
+            if (lang) track.querySelector("input[type=text]").value = lang;
+            document.querySelector("#sub").insertBefore(track, document.querySelector("#sub-add"));
+        }
+
+        async function genHtml(e) {
+            e.preventDefault();
+            const fileList = Array.from(e.target.querySelectorAll("input[type=file]")).map(i => i.files[0]);
+            const langList = Array.from(e.target.querySelectorAll("input[type=text]")).map(i => i.value);
+            if (langList.length < 1) {
+                alert("At least 1 subtitle track required");
+                return;
+            }
+
+            e.target.querySelector("input[type=submit]").disabled = true;
+
+            const fileName = fileList[0].name;
+            const key = await new Promise(rsov => hashBlob(fileList[0], rsov));
+            const subs = Object.fromEntries(await Promise.all(langList.map((lang, i) => {
+                return new Promise(rsov => {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(fileList[i + 1]);
+                    reader.onload = () => rsov([lang, reader.result]);
+                });
+            })));
+
+
+            // Build HTML
+            const player = document.implementation.createHTMLDocument(fileName.split(".")[0]);
+            const meta = document.createElement("meta");
+            const playerStyle = document.createElement("style");
+            meta.setAttribute("charset", "UTF-8");
+            playerStyle.innerHTML = document.querySelector("#player-style").innerHTML;
+            player.head.appendChild(meta);
+            player.head.appendChild(playerStyle);
+            player.body.innerHTML = document.querySelector("#player-body").innerHTML;
+            const playerScript = document.createElement("script");
+            const playloadScript = document.createElement("script");
+            playerScript.innerHTML = document.querySelector("#player-script").innerHTML;
+            playloadScript.innerHTML = `const payload = "${btoa(rc4(key, JSON.stringify(subs)))}"`;
+            player.querySelector("body").appendChild(playerScript);
+            player.querySelector("body").appendChild(playloadScript);
+            player.querySelector("#player-filename").textContent = fileName;
+            const output = new File(
+                [player.documentElement.innerHTML],
+                `${fileName.split(".")[0]} (${langList.join("+")}).html`,
+                { type: "text/html" },
+            );
+
+            // Download
+            const downloader = document.createElement("a");
+            downloader.style.display = "none";
+            downloader.setAttribute('download', output.name);
+            downloader.href = await new Promise(rsov => {
+                const reader = new FileReader();
+                reader.readAsDataURL(output);
+                reader.onload = () => rsov(reader.result);
+            });
+            document.body.appendChild(downloader);
+            downloader.click();
+            downloader.remove();
+
+            e.target.querySelector("input[type=submit]").disabled = false;
+        }
+
+    </script>
+
+    <template id="player-body">
+        <div id="drop" ondrop="dropHandler(event);" ondragover="event.preventDefault()">
+            <span>Drag and drop <span id="player-filename"></span> in this box</span>
+            <label style="margin-top: 1rem;">
+                or
+                <input type="file" accept="audio/*" onchange="decryptSubs(event.target.files[0]);">
+            </label>
+        </div>
+    </template>
+    <script id="player-script">
+        function dropHandler(e) {
+            e.preventDefault();
+            decryptSubs(e.dataTransfer.items ? e.dataTransfer.items[0].getAsFile() : ev.dataTransfer.files[0]);
+        }
+
+        function decryptSubs(audioFile) {
+            hashBlob(audioFile, (k) => {
+                let subs;
+                try {
+                    subs = JSON.parse(rc4(k, atob(payload)));
+                } catch (err) { // Treat invalid JSON as failed decryption
+                    alert("Error: Invalid file");
+                }
+                if (subs) renderPlayer(audioFile, subs);
+            });
+        }
+
+        function renderPlayer(audioFile, subs) {
+            document.querySelector("#drop").remove();
+            const body = document.querySelector("body");
+            const audio = document.createElement("audio");
+            const video = document.createElement("video");
+            audio.setAttribute("controls", "true");
+            audio.setAttribute("autoplay", "true");
+            
+            const sourceA = document.createElement("source");
+            const sourceV = document.createElement("source");
+            const fileUrl = URL.createObjectURL(audioFile);
+            sourceA.setAttribute("src", fileUrl);
+            sourceV.setAttribute("src", fileUrl);
+            sourceA.setAttribute("type", audioFile.type);
+            sourceV.setAttribute("type", audioFile.type);
+            audio.appendChild(sourceA);
+            video.appendChild(sourceV);
+            const select = document.createElement("select");
+            for (lang in subs) {
+                const track = document.createElement("track");
+                track.setAttribute("kind", "subtitles");
+                track.setAttribute("srclang", lang);
+                track.setAttribute("src", subs[lang]);
+                const option = document.createElement("option");
+                option.setAttribute("value", lang);
+                option.textContent = lang;
+                if (lang === "en") {
+                    track.setAttribute("default", "true");
+                    option.setAttribute("selected", "true");
+                }
+                video.appendChild(track);
+                select.appendChild(option);
+            }
+            video.muted = true;
+            audio.onplay = () => {
+                if (!Array.from(video.textTracks).some(track => track.mode === "showing")) {
+                    for (let track of video.textTracks) { // Force EN if no subs are showing
+                        track.mode = (track.language === "en") ? "showing" : "hidden";
+                    }
+                }
+                video.play();
+            };
+            audio.onpause = () => video.pause();
+            audio.onseeked = () => { video.currentTime = audio.currentTime; }
+            select.onchange = (e) => {
+                for (let track of video.textTracks) {
+                    track.mode = (track.language === e.target.value) ? "showing" : "hidden";
+                }
+            };
+            body.appendChild(select);
+            body.appendChild(video);
+            body.appendChild(audio);
+        }
+
+        function hashBlob(blob, cb) {
+            const reader = new FileReader();
+            reader.readAsArrayBuffer(blob);
+            reader.onload = () => {
+                const arr = new BigUint64Array(reader.result.slice(reader.result.byteLength % 8));
+                let n = 0n;
+                for(let i = 0; i < arr.length; i++) n ^= arr[i];
+                cb(n.toString(16));
+            };
+        }
+
+        /**
+         * RC4 symmetric cipher encryption/decryption
+         * @license Public Domain
+         * @param string key - secret key for encryption/decryption
+         * @param string str - string to be encrypted/decrypted
+         * @return string
+         */
+        function rc4(key, str) {
+            var s = [], j = 0, x, res = '';
+            for (var i = 0; i < 256; i++) {
+                s[i] = i;
+            }
+            for (i = 0; i < 256; i++) {
+                j = (j + s[i] + key.charCodeAt(i % key.length)) % 256;
+                x = s[i];
+                s[i] = s[j];
+                s[j] = x;
+            }
+            i = 0;
+            j = 0;
+            for (var y = 0; y < str.length; y++) {
+                i = (i + 1) % 256;
+                j = (j + s[i]) % 256;
+                x = s[i];
+                s[i] = s[j];
+                s[j] = x;
+                res += String.fromCharCode(str.charCodeAt(y) ^ s[(s[i] + s[j]) % 256]);
+            }
+            return res;
+        }
+    </script>
+</body>
+
+</html>
