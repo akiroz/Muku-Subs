@@ -166,7 +166,7 @@
                 .replace(/\{\/([ibu])\}/g, '</$1>')
                 .replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, '$1.$2')
                 .concat('\n\n');
-            return new Blob(["WEBVTT FILE\n\n" + cueList], { type: "text/vtt" });
+            return new Blob(["WEBVTT\n\n" + cueList], { type: "text/vtt" });
         }
 
         async function genHtml(e) {
