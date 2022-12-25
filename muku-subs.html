@@ -109,8 +109,8 @@
         <div class="sub-track">
             <input type="text" placeholder="lang" style="width: 3rem;" required>
             <label>
-                VTT File:
-                <input type="file" accept="text/vtt" required>
+                SRT/VTT File:
+                <input type="file" accept="text/vtt, .srt" required>
             </label>
             <button>Remove -</button>
         </div>
@@ -130,6 +130,45 @@
             document.querySelector("#sub").insertBefore(track, document.querySelector("#sub-add"));
         }
 
+        /**
+         * MIT License
+         *
+         * Copyright (c) 2018 Shariar Shaikot
+         *
+         * Permission is hereby granted, free of charge, to any person obtaining a copy
+         * of this software and associated documentation files (the "Software"), to deal
+         * in the Software without restriction, including without limitation the rights
+         * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+         * copies of the Software, and to permit persons to whom the Software is
+         * furnished to do so, subject to the following conditions:
+         *
+         * The above copyright notice and this permission notice shall be included in all
+         * copies or substantial portions of the Software.
+         *
+         * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+         * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+         * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+         * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+         * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+         * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+         * SOFTWARE.
+         */
+        async function srt2vtt(blob) {
+            const srt = await new Promise((rsov) => {
+                const rdr = new FileReader();
+                rdr.readAsText(blob);
+                rdr.onload = () => rsov(rdr.result);
+            });
+            const cueList = srt
+                .replace(/\{\\([ibu])\}/g, '</$1>')
+                .replace(/\{\\([ibu])1\}/g, '<$1>')
+                .replace(/\{([ibu])\}/g, '<$1>')
+                .replace(/\{\/([ibu])\}/g, '</$1>')
+                .replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, '$1.$2')
+                .concat('\n\n');
+            return new Blob(["WEBVTT FILE\n\n" + cueList], { type: "text/vtt" });
+        }
+
         async function genHtml(e) {
             e.preventDefault();
             const fileList = Array.from(e.target.querySelectorAll("input[type=file]")).map(i => i.files[0]);
@@ -145,10 +184,11 @@
             const fileName = fileList[0].name;
             const key = await new Promise(rsov => hashBlob(fileList[0], rsov));
             const subs = Object.fromEntries(await Promise.all(langList.map((lang, i) => {
-                return new Promise(rsov => {
-                    const reader = new FileReader();
-                    reader.readAsDataURL(fileList[i + 1]);
-                    reader.onload = () => rsov([lang, reader.result]);
+                return new Promise(async (rsov) => {
+                    const f = fileList[i + 1];
+                    const rdr = new FileReader();
+                    rdr.readAsDataURL(f.type === "text/vtt"? f: await srt2vtt(f));
+                    rdr.onload = () => rsov([lang, rdr.result]);
                 });
             })));
 
@@ -174,7 +214,7 @@
             }
             
             const output = new File(
-                [player.documentElement.innerHTML],
+                ["<!DOCTYPE html><html>", player.documentElement.innerHTML, "</html>"],
                 `${fileName.split(".")[0]} (${langList.join("+")}).html`,
                 { type: "text/html" },
             );
@@ -255,7 +295,7 @@
                 const option = document.createElement("option");
                 option.setAttribute("value", lang);
                 option.textContent = lang;
-                if (lang === "en") {
+                if (lang === "en" || Object.keys(subs).length === 1) {
                     track.setAttribute("default", "true");
                     option.setAttribute("selected", "true");
                 }
@@ -266,10 +306,10 @@
             audio.onplay = () => {
                 if (!Array.from(video.textTracks).some(track => track.mode === "showing")) {
                     for (let track of video.textTracks) { // Force EN if no subs are showing
-                        track.mode = (track.language === "en") ? "showing" : "hidden";
+                        track.mode = (track.language === "en" || Object.keys(subs).length === 1) ? "showing" : "hidden";
                     }
                 }
-                video.play();
+                if(video.paused) video.play();
             };
             audio.onpause = () => video.pause();
             audio.onseeked = () => { video.currentTime = audio.currentTime; }
@@ -281,6 +321,29 @@
             body.appendChild(select);
             body.appendChild(video);
             body.appendChild(audio);
+
+            document.addEventListener("keydown", (ev) => {
+                switch(ev.code) {
+                    case "ArrowLeft":
+                        audio.currentTime = Math.max(audio.currentTime - 5, 0);
+                        break;
+                    case "ArrowRight":
+                        audio.currentTime = Math.min(audio.currentTime + 5, audio.duration);
+                        break;
+                    case "KeyJ":
+                        audio.currentTime = Math.max(audio.currentTime - 10, 0);
+                        break;
+                    case "KeyL":
+                        audio.currentTime = Math.min(audio.currentTime + 10, audio.duration);
+                        break;
+                    case "Space":
+                    case "KeyK":
+                        audio.paused ? audio.play() : audio.pause();
+                        break;
+                    default:
+                        break;
+                }
+            });
         }
 
         function hashBlob(blob, cb) {
